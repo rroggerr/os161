@@ -117,7 +117,7 @@ void lock_destroy(struct lock *);
 struct cv {
         char *cv_name;
         // add what you need here
-        struct *lock lk;
+        struct wchan *cv_wchan;
         // (don't forget to mark things volatile as needed)
 };
 
@@ -143,3 +143,5 @@ void cv_broadcast(struct cv *cv, struct lock *lock);
 
 
 #endif /* _SYNCH_H_ */
+
+

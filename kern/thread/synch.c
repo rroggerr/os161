@@ -40,7 +40,7 @@
 #include <current.h>
 #include <synch.h>
 
-bool rogersdebug = true;     // dont forget to false it later
+bool rogersdebug = false;     // dont forget to false it later
 
 ////////////////////////////////////////////////////////////
 //
@@ -264,9 +264,10 @@ cv_create(const char *name)
         }
         
         // add stuff here as needed
-        
-        lk = lock_create(cv->cv_name);
-        
+        cv->cv_wchan = wchan_create(name);
+    
+    KASSERT(cv!= NULL);
+    KASSERT(cv->cv_wchan != NULL);
         return cv;
 }
 
@@ -276,7 +277,8 @@ cv_destroy(struct cv *cv)
         KASSERT(cv != NULL);
 
         // add stuff here as needed
-        
+        wchan_destroy(cv->cv_wchan);
+    
         kfree(cv->cv_name);
         kfree(cv);
 }
@@ -285,15 +287,24 @@ void
 cv_wait(struct cv *cv, struct lock *lock)
 {
         // Write this
-        (void)cv;    // suppress warning until code gets written
-        (void)lock;  // suppress warning until code gets written
+    if (lock_do_i_hold(lock)){
+        
+        wchan_lock(cv->cv_wchan);
+        lock_release(lock);
+        wchan_sleep(cv->cv_wchan);
+        lock_acquire(lock);
+    }
+    else {
+        panic("cv_wait: lock is being held by someone else!\n");
+    }
+
 }
 
 void
 cv_signal(struct cv *cv, struct lock *lock)
 {
         // Write this
-	(void)cv;    // suppress warning until code gets written
+    wchan_wakeone(cv->cv_wchan);
 	(void)lock;  // suppress warning until code gets written
 }
 
@@ -301,6 +312,8 @@ void
 cv_broadcast(struct cv *cv, struct lock *lock)
 {
 	// Write this
-	(void)cv;    // suppress warning until code gets written
+    wchan_wakeall(cv->cv_wchan);
 	(void)lock;  // suppress warning until code gets written
 }
+
+
