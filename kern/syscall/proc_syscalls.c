@@ -9,6 +9,9 @@
 #include <thread.h>
 #include <addrspace.h>
 #include <copyinout.h>
+#include <mips/trapframe.h>
+#include <limits.h>
+#include "opt-A2.h"
 
   /* this implementation of sys__exit does not do anything with the exit code */
   /* this needs to be fixed to get exit() and waitpid() working properly */
@@ -48,6 +51,51 @@ void sys__exit(int exitcode) {
   panic("return from thread_exit in sys_exit\n");
 }
 
+#if OPT_A2
+//implementation for fork()
+int
+sys_fork(struct trapframe *tf, pid_t *retval){
+    struct proc *p = curproc;
+    (void) retval;
+    if (proc_count_get()+1 >= PID_MAX) {
+        return(ENPROC);
+    }
+    else {
+        char childprocname[] = "child";
+        struct proc *childproc = proc_create_runprogram(childprocname);
+        struct trapframe *new_tf = kmalloc(sizeof(struct trapframe));
+        KASSERT(new_tf!= NULL);
+        memcpy(new_tf,tf,sizeof(struct trapframe));
+        
+        //return 0 to parent
+        new_tf->tf_v0 = 0;
+        //return parent pid to child
+        
+        tf->tf_v0 = p->currpid;
+        
+        // copy addr space over
+        int ascopyerr = as_copy(p->p_addrspace, &(childproc->p_addrspace));
+        if (ascopyerr) {
+            panic("as_copy failed in sys_fork\n");
+        }
+        
+        //copy over p_cwd pointers
+        childproc->p_cwd = p->p_cwd;
+        
+        //update pc
+        new_tf->tf_epc+=4;
+        
+        int forkerror = thread_fork("child process thread", childproc,
+                                    enter_forked_process, new_tf,0);
+        if (forkerror) {
+            panic("thread_fork failed in sys_fork\n");
+        }
+        return 0;
+    }
+    return 0; //should not get here
+}
+
+#endif //OPT_A2
 
 /* stub handler for getpid() system call                */
 int
@@ -55,7 +103,7 @@ sys_getpid(pid_t *retval)
 {
   /* for now, this is just a stub that always returns a PID of 1 */
   /* you need to fix this to make it work properly */
-  *retval = 1;
+    *retval = curproc->currpid;
   return(0);
 }
 
@@ -91,4 +139,5 @@ sys_waitpid(pid_t pid,
   *retval = pid;
   return(0);
 }
+
 
