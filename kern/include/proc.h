@@ -38,16 +38,11 @@
 
 #include <spinlock.h>
 #include <thread.h> /* required for struct threadarray */
-#include "opt-A2.h"
 
 struct addrspace;
 struct vnode;
 #ifdef UW
 struct semaphore;
-#if OPT_A2
-static struct array proctable;
-
-#endif //OPT_A2
 #endif // UW
 
 /*
@@ -71,11 +66,7 @@ struct proc {
      system calls, since each process will need to keep track of all files
      it has opened, not just the console. */
   struct vnode *console;                /* a vnode for the console device */
-#if OPT_A2
-    int currpid;
-    int parpid;
-#endif //OPT_A2
-#endif //UW
+#endif
 
 	/* add more material here as needed */
 };
@@ -111,4 +102,3 @@ struct addrspace *curproc_setas(struct addrspace *);
 
 
 #endif /* _PROC_H_ */
-

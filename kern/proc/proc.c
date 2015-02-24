@@ -50,8 +50,6 @@
 #include <vfs.h>
 #include <synch.h>
 #include <kern/fcntl.h>  
-#include "opt-A2.h"
-#include <array.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -103,10 +101,6 @@ proc_create(const char *name)
 
 #ifdef UW
 	proc->console = NULL;
-#if OPT_A2
-    array_add(proctable,(void)proc,currpid);
-    currpid+=1; //currpid starts at 1
-#endif //OPT_A2
 #endif // UW
 
 	return proc;
@@ -213,13 +207,7 @@ proc_bootstrap(void)
   if (no_proc_sem == NULL) {
     panic("could not create no_proc_sem semaphore\n");
   }
-#if OPT_A2
-    proctable = array_create();
-    if (proctable == NULL) {
-        panic("could not initialize proctable\n");
-    }
-#endif //OPT_A2
-#endif // UW
+#endif // UW 
 }
 
 /*
@@ -376,4 +364,3 @@ curproc_setas(struct addrspace *newas)
 	spinlock_release(&proc->p_lock);
 	return oldas;
 }
-
