@@ -76,6 +76,7 @@
  * stack, starting at sp+16 to skip over the slots for the
  * registerized values, with copyin().
  */
+
 void
 syscall(struct trapframe *tf)
 {

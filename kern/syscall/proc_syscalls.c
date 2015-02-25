@@ -13,11 +13,11 @@
 #include <limits.h>
 #include "opt-A2.h"
 
+
   /* this implementation of sys__exit does not do anything with the exit code */
   /* this needs to be fixed to get exit() and waitpid() working properly */
 
 void sys__exit(int exitcode) {
-
   struct addrspace *as;
   struct proc *p = curproc;
   /* for now, just include this to keep the compiler from complaining about
@@ -56,7 +56,6 @@ void sys__exit(int exitcode) {
 int
 sys_fork(struct trapframe *tf, pid_t *retval){
     struct proc *p = curproc;
-    (void) retval;
     if (proc_count_get()+1 >= PID_MAX) {
         return(ENPROC);
     }
@@ -67,11 +66,12 @@ sys_fork(struct trapframe *tf, pid_t *retval){
         KASSERT(new_tf!= NULL);
         memcpy(new_tf,tf,sizeof(struct trapframe));
         
-        //return 0 to parent
+        //return 0 to child
         new_tf->tf_v0 = 0;
-        //return parent pid to child
+        //return child pid to parent
+        tf->tf_v0 = childproc->currpid;
         
-        tf->tf_v0 = p->currpid;
+        *retval = childproc->currpid;
         
         // copy addr space over
         int ascopyerr = as_copy(p->p_addrspace, &(childproc->p_addrspace));

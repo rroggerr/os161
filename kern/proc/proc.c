@@ -53,6 +53,8 @@
 #include "opt-A2.h"
 #include <array.h>
 
+bool procdebug=true;
+
 /*
  * The process for the kernel; this holds all the kernel-only threads.
  */
@@ -116,7 +118,11 @@ proc_create(const char *name)
 	proc->console = NULL;
 #if OPT_A2
     array_add(proctable,(void*)proc,(unsigned *)&proc->currpid);
+    
     proc->currpid+=1; //currpid starts at 1
+    if (procdebug) {
+        kprintf("currpid %d \n",proc->currpid);
+    }
 #endif //OPT_A2
 #endif // UW
     

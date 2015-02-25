@@ -77,10 +77,8 @@ struct proc {
 	/* add more material here as needed */
 };
 
-/* Getters and Setters to proc_count */
+/* Getter to proc_count */
 unsigned int proc_count_get(void);
-
-void proc_count_set(unsigned int pc);
 
 /* This is the process structure for the kernel and for kernel-only threads. */
 extern struct proc *kproc;
