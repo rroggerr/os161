@@ -76,6 +76,7 @@ struct semaphore *no_proc_sem;
 #if OPT_A2
 static struct proc **proctable;
 static int *exit_status;
+static bool *alive_array;
 static int proctable_size;
 static int proctable_cap;
 
@@ -97,6 +98,10 @@ int get_array_size(void){
 
 int *get_exit_status(void){
     return exit_status;
+}
+
+bool *get_alive_array(void){
+    return alive_array;
 }
 
 #endif //OPT_A2
@@ -141,18 +146,23 @@ proc_create(const char *name)
         proctable_cap = proctable_cap*2;
         struct proc **new_proctable = kmalloc(proctable_cap * sizeof(struct proc *));
         int *new_exit_status = kmalloc(proctable_cap * sizeof(int));
+        bool *new_alive_array =kmalloc(proctable_cap * sizeof(bool));
         for (int i=0; i<proctable_size; i++) {
             new_proctable[i]=proctable[i];
             new_exit_status[i]=exit_status[i];
+            new_alive_array[i]=alive_array[i];
         }
         kfree(proctable);
         kfree(exit_status);
+        kfree(alive_array);
         proctable=new_proctable;
         exit_status=new_exit_status;
+        alive_array=new_alive_array;
     }
     //assign element
     proctable[proctable_size] = proc;
     exit_status[proctable_size] = -1;
+    alive_array[proctable_size] = true;
     proc->currpid =proctable_size;
     proctable_size++;
     
@@ -261,6 +271,7 @@ proc_bootstrap(void)
     proctable_size=0;
     proctable = kmalloc(proctable_cap * sizeof(struct proc *));
     exit_status = kmalloc(proctable_cap * sizeof(int));
+    alive_array = kmalloc(proctable_cap* sizeof(bool));
     
     proc_count = 0;
 #endif //OPT_A2

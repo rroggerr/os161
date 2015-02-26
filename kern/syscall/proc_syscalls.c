@@ -20,22 +20,17 @@
 /* this needs to be fixed to get exit() and waitpid() working properly */
 
 void sys__exit(int exitcode) {
+    
     struct addrspace *as;
     struct proc *p = curproc;
     
 #if OPT_A2
-    //kprintf("sys_exit tries to acq lock\n");
     lock_acquire(p->waitpid_lk);
-    //kprintf("sys_exit : acquired\n");
-    //struct proc **proctable = get_proctable();
     int *exit_status = get_exit_status();
-    //kprintf("sys_exit : exit_status_get\n");
-    p->alive = false;
-    exit_status[p->currpid-1] = exitcode;
-    cv_broadcast(p->waitpid_cv,p->waitpid_lk);
-    //kprintf("sys_exit : broadcasted\n");
-    cv_destroy(p->waitpid_cv);
-    
+    bool *alive_array = get_alive_array();
+    alive_array[p->currpid -1] = false;
+    exit_status[p->currpid -1] = exitcode;
+    cv_broadcast(p->waitpid_cv, p->waitpid_lk);
 #else
     /* for now, just include this to keep the compiler from complaining about
      an unused variable */
@@ -60,13 +55,10 @@ void sys__exit(int exitcode) {
     /* note: curproc cannot be used after this call */
     proc_remthread(curthread);
     
-#if OPT_A2
-#else
     /* if this is the last user process in the system, proc_destroy()
      will wake up the kernel menu thread */
     proc_destroy(p);
-#endif //OPT_A2
-    lock_release(p->waitpid_lk);
+    
     thread_exit();
     /* thread_exit() does not return, so we should never get here */
     panic("return from thread_exit in sys_exit\n");
@@ -139,10 +131,11 @@ sys_waitpid(pid_t pid,
             pid_t *retval)
 {
     int exitstatus;
-#if OPT_A2 
+#if OPT_A2
     struct proc *p = curproc;
     struct proc **proc_table = get_proctable();
     int *exit_status=get_exit_status();
+    bool *alive_array = get_alive_array();
     KASSERT(proc_table != NULL);
     
     //get number of elems in the array
@@ -164,9 +157,15 @@ sys_waitpid(pid_t pid,
     //check for proc that already exited
     else{
         struct proc *child = proc_table[pid-1];
-        
+        if (!(alive_array[pid-1])){
+            exitstatus = exit_status[pid];
+            exitstatus = _MKWAIT_EXIT(exitstatus);
+            copyout((void *)&exitstatus,status,sizeof(int));
+            *retval = pid;
+            return(0);
+        }
         //make sure pid = retieved pid
-        if (child->currpid != pid) {
+        else if (child->currpid != pid) {
             panic("pid is wrong: child %d, requested %d \n", child->currpid, pid);
         }
         // make sure caller is parent
@@ -177,13 +176,6 @@ sys_waitpid(pid_t pid,
             return(ECHILD);
         }
         // assumptions correct, proceed
-        else if (!child->alive){
-            exitstatus = exit_status[pid];
-            exitstatus = _MKWAIT_EXIT(exitstatus);
-            copyout((void *)&exitstatus,status,sizeof(int));
-            *retval = pid;
-            return(0);
-        }
         else {
             //kprintf("waitpid tries to acq lock\n");
             lock_acquire(child->waitpid_lk);
@@ -222,7 +214,5 @@ sys_waitpid(pid_t pid,
     }
     *retval = pid;
 #endif //OPT_A2
-        return(0);
+    return(0);
 }
-
-
