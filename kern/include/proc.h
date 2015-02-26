@@ -38,12 +38,15 @@
 
 #include <spinlock.h>
 #include <thread.h> /* required for struct threadarray */
+#include <array.h>
 #include "opt-A2.h"
 
 struct addrspace;
 struct vnode;
 #ifdef UW
 struct semaphore;
+#if OPT_A2
+#endif //OPT_A2
 
 #endif // UW
 
@@ -54,31 +57,41 @@ struct proc {
 	char *p_name;			/* Name of this process */
 	struct spinlock p_lock;		/* Lock for this structure */
 	struct threadarray p_threads;	/* Threads in this process */
-
+    
 	/* VM */
 	struct addrspace *p_addrspace;	/* virtual address space */
-
+    
 	/* VFS */
 	struct vnode *p_cwd;		/* current working directory */
-
+    
 #ifdef UW
-  /* a vnode to refer to the console device */
-  /* this is a quick-and-dirty way to get console writes working */
-  /* you will probably need to change this when implementing file-related
+    /* a vnode to refer to the console device */
+    /* this is a quick-and-dirty way to get console writes working */
+    /* you will probably need to change this when implementing file-related
      system calls, since each process will need to keep track of all files
      it has opened, not just the console. */
-  struct vnode *console;                /* a vnode for the console device */
+    struct vnode *console;                /* a vnode for the console device */
 #if OPT_A2
+    struct cv *waitpid_cv;
+    struct lock *waitpid_lk;
+    bool alive;
     int currpid;
     int parpid;
 #endif //OPT_A2
 #endif //UW
-
+    
 	/* add more material here as needed */
 };
 
 /* Getter to proc_count */
 unsigned int proc_count_get(void);
+
+/* Getter to proc at a certain pid */
+struct proc **get_proctable(void);
+
+int *get_exit_status(void);
+
+int get_array_size(void);
 
 /* This is the process structure for the kernel and for kernel-only threads. */
 extern struct proc *kproc;

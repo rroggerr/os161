@@ -74,12 +74,29 @@ struct semaphore *no_proc_sem;
 #endif  // UW
 
 #if OPT_A2
-static struct array *proctable;
+static struct proc **proctable;
+static int *exit_status;
+static int proctable_size;
+static int proctable_cap;
 
 /* Getters and Setters to proc_count */
 unsigned int proc_count_get(void)
 {
     return proc_count;
+}
+
+/* Getter to proc at a certain pid */
+struct proc **get_proctable(void)
+{
+    return proctable;
+}
+
+int get_array_size(void){
+    return proctable_size;
+}
+
+int *get_exit_status(void){
+    return exit_status;
 }
 
 #endif //OPT_A2
@@ -94,7 +111,6 @@ struct proc *
 proc_create(const char *name)
 {
 	struct proc *proc;
-    
 	proc = kmalloc(sizeof(*proc));
 	if (proc == NULL) {
 		return NULL;
@@ -104,6 +120,8 @@ proc_create(const char *name)
 		kfree(proc);
 		return NULL;
 	}
+    
+    proc->alive=true;
     
 	threadarray_init(&proc->p_threads);
 	spinlock_init(&proc->p_lock);
@@ -117,12 +135,34 @@ proc_create(const char *name)
 #ifdef UW
 	proc->console = NULL;
 #if OPT_A2
-    array_add(proctable,(void*)proc,(unsigned *)&proc->currpid);
+    if (proctable_size<proctable_cap) {}
+    //double cap and reallocate elements
+    else {
+        proctable_cap = proctable_cap*2;
+        struct proc **new_proctable = kmalloc(proctable_cap * sizeof(struct proc *));
+        int *new_exit_status = kmalloc(proctable_cap * sizeof(int));
+        for (int i=0; i<proctable_size; i++) {
+            new_proctable[i]=proctable[i];
+            new_exit_status[i]=exit_status[i];
+        }
+        kfree(proctable);
+        kfree(exit_status);
+        proctable=new_proctable;
+        exit_status=new_exit_status;
+    }
+    //assign element
+    proctable[proctable_size] = proc;
+    exit_status[proctable_size] = -1;
+    proc->currpid =proctable_size;
+    proctable_size++;
     
     proc->currpid+=1; //currpid starts at 1
-    if (procdebug) {
-        kprintf("currpid %d \n",proc->currpid);
-    }
+    proc->waitpid_cv = cv_create("proc_waitpid_cv");
+    proc->waitpid_lk = lock_create("waitpid_lock");
+    KASSERT(proc->waitpid_cv != NULL);
+    KASSERT(proc->waitpid_lk != NULL);
+    
+    
 #endif //OPT_A2
 #endif // UW
     
@@ -217,7 +257,11 @@ void
 proc_bootstrap(void)
 {
 #if OPT_A2
-    proctable = array_create();
+    proctable_cap=5;
+    proctable_size=0;
+    proctable = kmalloc(proctable_cap * sizeof(struct proc *));
+    exit_status = kmalloc(proctable_cap * sizeof(int));
+    
     proc_count = 0;
 #endif //OPT_A2
     kproc = proc_create("[kernel]");

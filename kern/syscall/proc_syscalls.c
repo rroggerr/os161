@@ -12,43 +12,64 @@
 #include <mips/trapframe.h>
 #include <limits.h>
 #include "opt-A2.h"
+#include <array.h>
+#include <synch.h>
 
 
-  /* this implementation of sys__exit does not do anything with the exit code */
-  /* this needs to be fixed to get exit() and waitpid() working properly */
+/* this implementation of sys__exit does not do anything with the exit code */
+/* this needs to be fixed to get exit() and waitpid() working properly */
 
 void sys__exit(int exitcode) {
-  struct addrspace *as;
-  struct proc *p = curproc;
-  /* for now, just include this to keep the compiler from complaining about
+    struct addrspace *as;
+    struct proc *p = curproc;
+    
+#if OPT_A2
+    //kprintf("sys_exit tries to acq lock\n");
+    lock_acquire(p->waitpid_lk);
+    //kprintf("sys_exit : acquired\n");
+    //struct proc **proctable = get_proctable();
+    int *exit_status = get_exit_status();
+    //kprintf("sys_exit : exit_status_get\n");
+    p->alive = false;
+    exit_status[p->currpid-1] = exitcode;
+    cv_broadcast(p->waitpid_cv,p->waitpid_lk);
+    //kprintf("sys_exit : broadcasted\n");
+    cv_destroy(p->waitpid_cv);
+    
+#else
+    /* for now, just include this to keep the compiler from complaining about
      an unused variable */
-  (void)exitcode;
-
-  DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",exitcode);
-
-  KASSERT(curproc->p_addrspace != NULL);
-  as_deactivate();
-  /*
-   * clear p_addrspace before calling as_destroy. Otherwise if
-   * as_destroy sleeps (which is quite possible) when we
-   * come back we'll be calling as_activate on a
-   * half-destroyed address space. This tends to be
-   * messily fatal.
-   */
-  as = curproc_setas(NULL);
-  as_destroy(as);
-
-  /* detach this thread from its process */
-  /* note: curproc cannot be used after this call */
-  proc_remthread(curthread);
-
-  /* if this is the last user process in the system, proc_destroy()
+    (void)exitcode;
+#endif //OPT_A2
+    
+    DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",exitcode);
+    
+    KASSERT(curproc->p_addrspace != NULL);
+    as_deactivate();
+    /*
+     * clear p_addrspace before calling as_destroy. Otherwise if
+     * as_destroy sleeps (which is quite possible) when we
+     * come back we'll be calling as_activate on a
+     * half-destroyed address space. This tends to be
+     * messily fatal.
+     */
+    as = curproc_setas(NULL);
+    as_destroy(as);
+    
+    /* detach this thread from its process */
+    /* note: curproc cannot be used after this call */
+    proc_remthread(curthread);
+    
+#if OPT_A2
+#else
+    /* if this is the last user process in the system, proc_destroy()
      will wake up the kernel menu thread */
-  proc_destroy(p);
-  
-  thread_exit();
-  /* thread_exit() does not return, so we should never get here */
-  panic("return from thread_exit in sys_exit\n");
+    proc_destroy(p);
+#endif //OPT_A2
+    lock_release(p->waitpid_lk);
+    thread_exit();
+    /* thread_exit() does not return, so we should never get here */
+    panic("return from thread_exit in sys_exit\n");
 }
 
 #if OPT_A2
@@ -60,8 +81,7 @@ sys_fork(struct trapframe *tf, pid_t *retval){
         return(ENPROC);
     }
     else {
-        char childprocname[] = "child";
-        struct proc *childproc = proc_create_runprogram(childprocname);
+        struct proc *childproc = proc_create_runprogram("child proc");
         struct trapframe *new_tf = kmalloc(sizeof(struct trapframe));
         KASSERT(new_tf!= NULL);
         memcpy(new_tf,tf,sizeof(struct trapframe));
@@ -72,6 +92,9 @@ sys_fork(struct trapframe *tf, pid_t *retval){
         tf->tf_v0 = childproc->currpid;
         
         *retval = childproc->currpid;
+        
+        //give parent pid to child
+        childproc->parpid = p->currpid;
         
         // copy addr space over
         int ascopyerr = as_copy(p->p_addrspace, &(childproc->p_addrspace));
@@ -101,43 +124,105 @@ sys_fork(struct trapframe *tf, pid_t *retval){
 int
 sys_getpid(pid_t *retval)
 {
-  /* for now, this is just a stub that always returns a PID of 1 */
-  /* you need to fix this to make it work properly */
+    /* for now, this is just a stub that always returns a PID of 1 */
+    /* you need to fix this to make it work properly */
     *retval = curproc->currpid;
-  return(0);
+    return(0);
 }
 
 /* stub handler for waitpid() system call                */
 
 int
 sys_waitpid(pid_t pid,
-	    userptr_t status,
-	    int options,
-	    pid_t *retval)
+            userptr_t status,
+            int options,
+            pid_t *retval)
 {
-  int exitstatus;
-  int result;
-
-  /* this is just a stub implementation that always reports an
+    int exitstatus;
+#if OPT_A2 
+    struct proc *p = curproc;
+    struct proc **proc_table = get_proctable();
+    int *exit_status=get_exit_status();
+    KASSERT(proc_table != NULL);
+    
+    //get number of elems in the array
+    int proctable_size = get_array_size();
+    
+    if (options != 0) {
+        return(EINVAL);
+    }
+    else if (status == NULL){
+        return(EFAULT);
+    }
+    else if (pid > proctable_size){
+        exitstatus = _MKWAIT_EXIT(exitstatus);
+        copyout((void *)&exitstatus,status,sizeof(int));
+        //kprintf("pid: %d,  proctable_size:%d \n ", pid,proctable_size);
+        *retval = 0;
+        return(ESRCH);
+    }
+    //check for proc that already exited
+    else{
+        struct proc *child = proc_table[pid-1];
+        
+        //make sure pid = retieved pid
+        if (child->currpid != pid) {
+            panic("pid is wrong: child %d, requested %d \n", child->currpid, pid);
+        }
+        // make sure caller is parent
+        else if (p->currpid != child->parpid) {
+            // caller is not parent
+            *retval = 0;
+            //kprintf("caller is not parent currpid: %d, child parent: %d\n", p->currpid ,child->parpid);
+            return(ECHILD);
+        }
+        // assumptions correct, proceed
+        else if (!child->alive){
+            exitstatus = exit_status[pid];
+            exitstatus = _MKWAIT_EXIT(exitstatus);
+            copyout((void *)&exitstatus,status,sizeof(int));
+            *retval = pid;
+            return(0);
+        }
+        else {
+            //kprintf("waitpid tries to acq lock\n");
+            lock_acquire(child->waitpid_lk);
+            //kprintf("waitpid : acquired\n");
+            while (child->alive) {
+                cv_wait(child->waitpid_cv,child->waitpid_lk);
+            }
+            //kprintf("waitpid got out of wait\n");
+            *retval = pid;
+            exitstatus = exit_status[pid];
+            exitstatus = _MKWAIT_EXIT(exitstatus);
+            copyout((void *)&exitstatus,status,sizeof(int));
+            lock_release(child->waitpid_lk);
+            return(0);
+        }
+    }
+    
+#else
+    /* this is just a stub implementation that always reports an
      exit status of 0, regardless of the actual exit status of
-     the specified process.   
+     the specified process.
      In fact, this will return 0 even if the specified process
      is still running, and even if it never existed in the first place.
-
+     
      Fix this!
-  */
-
-  if (options != 0) {
-    return(EINVAL);
-  }
-  /* for now, just pretend the exitstatus is 0 */
-  exitstatus = 0;
-  result = copyout((void *)&exitstatus,status,sizeof(int));
-  if (result) {
-    return(result);
-  }
-  *retval = pid;
-  return(0);
+     */
+    int result;
+    if (options != 0) {
+        return(EINVAL);
+    }
+    /* for now, just pretend the exitstatus is 0 */
+    exitstatus = 0;
+    result = copyout((void *)&exitstatus,status,sizeof(int));
+    if (result) {
+        return(result);
+    }
+    *retval = pid;
+#endif //OPT_A2
+        return(0);
 }
 
 
