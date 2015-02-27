@@ -45,6 +45,7 @@ struct addrspace;
 struct vnode;
 #ifdef UW
 struct semaphore;
+struct proc **proctable;
 #if OPT_A2
 #endif //OPT_A2
 
@@ -75,6 +76,7 @@ struct proc {
     struct cv *waitpid_cv;
     struct lock *waitpid_lk;
     bool alive;
+    int exit_status;
     int currpid;
     int parpid;
 #endif //OPT_A2
@@ -89,11 +91,7 @@ unsigned int proc_count_get(void);
 /* Getter to proc at a certain pid */
 struct proc **get_proctable(void);
 
-int *get_exit_status(void);
-
 int get_array_size(void);
-
-bool *get_alive_array(void);
 
 /* This is the process structure for the kernel and for kernel-only threads. */
 extern struct proc *kproc;

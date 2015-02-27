@@ -52,6 +52,7 @@
 #include <kern/fcntl.h>
 #include "opt-A2.h"
 #include <array.h>
+#include <limits.h>
 
 bool procdebug=true;
 
@@ -74,9 +75,6 @@ struct semaphore *no_proc_sem;
 #endif  // UW
 
 #if OPT_A2
-static struct proc **proctable;
-static int *exit_status;
-static bool *alive_array;
 static int proctable_size;
 static int proctable_cap;
 
@@ -94,14 +92,6 @@ struct proc **get_proctable(void)
 
 int get_array_size(void){
     return proctable_size;
-}
-
-int *get_exit_status(void){
-    return exit_status;
-}
-
-bool *get_alive_array(void){
-    return alive_array;
 }
 
 #endif //OPT_A2
@@ -126,8 +116,6 @@ proc_create(const char *name)
 		return NULL;
 	}
     
-    proc->alive=true;
-    
 	threadarray_init(&proc->p_threads);
 	spinlock_init(&proc->p_lock);
     
@@ -140,33 +128,17 @@ proc_create(const char *name)
 #ifdef UW
 	proc->console = NULL;
 #if OPT_A2
-    if (proctable_size<proctable_cap) {}
-    //double cap and reallocate elements
-    else {
-        proctable_cap = proctable_cap*2;
-        struct proc **new_proctable = kmalloc(proctable_cap * sizeof(struct proc *));
-        int *new_exit_status = kmalloc(proctable_cap * sizeof(int));
-        bool *new_alive_array =kmalloc(proctable_cap * sizeof(bool));
-        for (int i=0; i<proctable_size; i++) {
-            new_proctable[i]=proctable[i];
-            new_exit_status[i]=exit_status[i];
-            new_alive_array[i]=alive_array[i];
-        }
-        kfree(proctable);
-        kfree(exit_status);
-        kfree(alive_array);
-        proctable=new_proctable;
-        exit_status=new_exit_status;
-        alive_array=new_alive_array;
-    }
-    //assign element
-    proctable[proctable_size] = proc;
-    exit_status[proctable_size] = -1;
-    alive_array[proctable_size] = true;
-    proc->currpid =proctable_size;
-    proctable_size++;
+    proc->alive=true;
+    proc->exit_status = 0;
     
-    proc->currpid+=1; //currpid starts at 1
+    proctable[proctable_size] = proc;
+    
+    //asign pid to proc, pid = index+1, pid starts at 1
+    proctable_size++;
+    proc->currpid =proctable_size;
+    //set parpid =0 as default
+    proc->parpid =0;
+    
     proc->waitpid_cv = cv_create("proc_waitpid_cv");
     proc->waitpid_lk = lock_create("waitpid_lock");
     KASSERT(proc->waitpid_cv != NULL);
@@ -239,8 +211,9 @@ proc_destroy(struct proc *proc)
 	threadarray_cleanup(&proc->p_threads);
 	spinlock_cleanup(&proc->p_lock);
     
-	kfree(proc->p_name);
-	kfree(proc);
+    kfree(proc->p_name);
+	//kfree(proc);
+	
     
 #ifdef UW
 	/* decrement the process count */
@@ -267,12 +240,9 @@ void
 proc_bootstrap(void)
 {
 #if OPT_A2
-    proctable_cap=5;
+    proctable_cap=PID_MAX;
     proctable_size=0;
     proctable = kmalloc(proctable_cap * sizeof(struct proc *));
-    exit_status = kmalloc(proctable_cap * sizeof(int));
-    alive_array = kmalloc(proctable_cap* sizeof(bool));
-    
     proc_count = 0;
 #endif //OPT_A2
     kproc = proc_create("[kernel]");
