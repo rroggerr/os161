@@ -55,6 +55,15 @@ void sys__exit(int exitcode) {
         /* note: curproc cannot be used after this call */
         proc_remthread(curthread);
         
+        //set all the childrean of this poc to dead
+        for (int i=0; i<get_array_size(); i++) {
+            //find child with the dead parent
+            struct proc *tmpchild = proctable[i];
+            if (tmpchild->parpid == p->currpid) {
+                tmpchild->parpid=0;
+            }
+        }
+        
         /* if this is the last user process in the system, proc_destroy()
          will wake up the kernel menu thread */
         proc_destroy(p);
@@ -114,10 +123,10 @@ sys_fork(struct trapframe *tf, pid_t *retval){
         childproc->parpid = p->currpid;
         
         // copy addr space over
-        int ascopyerr = as_copy(p->p_addrspace, &(childproc->p_addrspace));
-        if (ascopyerr) {
+        /*int ascopyerr = */as_copy(p->p_addrspace, &(childproc->p_addrspace));
+        /*if (ascopyerr) {
             panic("as_copy failed in sys_fork\n");
-        }
+        }*/
         
         //copy over p_cwd pointers
         childproc->p_cwd = p->p_cwd;
@@ -208,6 +217,16 @@ sys_waitpid(pid_t pid,
         exitstatus = _MKWAIT_EXIT(exitstatus);
         copyout((void *)&exitstatus,status,sizeof(int));
         lock_release(child->waitpid_lk);
+        
+        //do it here as well before kfree
+        for (int i=0; i<get_array_size(); i++) {
+            //find child with the dead parent
+            struct proc *tmpchild = proctable[i];
+            if (tmpchild->parpid == p->currpid) {
+                tmpchild->parpid=0;
+            }
+        }
+        
         kfree(child);
         return(0);
     }
