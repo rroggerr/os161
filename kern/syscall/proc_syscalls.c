@@ -139,7 +139,7 @@ sys_fork(struct trapframe *tf, pid_t *retval){
         int forkerror = thread_fork("child process thread", childproc,
                                     enter_forked_process, new_tf,0);
         if (forkerror) {
-            return(ENOMEM);
+            return ENOMEM;
         }
         return 0;
     }
@@ -153,30 +153,91 @@ sys_fork(struct trapframe *tf, pid_t *retval){
 #if OPT_A2
 
 int
-sys_execv(const char *inprogname, char **inargs){
+sys_execv(const char *inprogram, char **inargs){
     
     struct addrspace *as;
 	struct vnode *v;
 	vaddr_t entrypoint, stackptr;
 	int result; // for checking error
-    char *progname; //kmalloc and copy here later
-    
-    
+    //kmalloc and copy here later
     
     //should copy in the progname and args here
-    (void)inprogname;
-    (void)inargs;
+    //(void)inargs;
     
     //int copyinstr(const_userptr_t usersrc, char *dest, size_t len, size_t *got);
-    int progname_size = strlen(inprogname);
+    int progname_size = strlen(inprogram);
     progname_size ++;
-    progname = kmalloc(progname_size * sizeof(char *));
+    char *progname = kmalloc(progname_size * sizeof(char));
     
     size_t got; // i dont think this matters
-    result = copyinstr((const_userptr_t)inprogname, progname, 128, &got);
+    result = copyinstr((const_userptr_t)inprogram, progname,
+                       progname_size * sizeof(char), &got);
     if (result) {
+        kfree(progname);
 		return result;
 	}
+    
+    // copy inargs into kern buffer first
+    //count number of args --> argc
+    int argc =0;
+    for (int i=0; inargs[i] != NULL; i++) {
+        argc++;
+    }
+    
+    char **arg_pointers = kmalloc(argc * sizeof(char **)); //doesnt include last NULL
+    //argc++; //for last NULL
+    char **args = kmalloc(sizeof(char **));
+    
+    //int copyin(const_userptr_t usersrc, void *dest, size_t len);
+    result = copyin((const_userptr_t)inargs, args, argc * sizeof(char *));
+    if (result) {
+        return result;
+    }
+    
+    /* DEBUG PRINT START --------------------
+    kprintf("argc= %d", argc);
+    for (int i =0;args[i] != NULL; i++) {
+        kprintf("[%d]: %s ",i,args[i]);
+    }
+    kprintf("\n");
+    
+    DEBUG PRINT END -----------------------*/
+    
+    //copy into args[]
+    for (int i=0; i<argc; i++) {
+        //kprintf("i= %d\n", i);
+        int tmp_arg_len = strlen(inargs[i]);
+        if (tmp_arg_len>ARG_MAX) {
+            return E2BIG;
+        }
+        
+        tmp_arg_len++; //for null term strings
+        
+        //kprintf("i=%d tmp_arg_len = %d\n", i,tmp_arg_len);
+
+        if (inargs[i] != NULL) {
+            args[i] = kmalloc(tmp_arg_len * sizeof(char));
+            //int copyinstr(const_userptr_t usersrc, char *dest, size_t len, size_t *got);
+            /*result = copyinstr((const_userptr_t)inargs[i], args[i], tmp_arg_len * sizeof(char), &got);
+            if (result) {
+                for (int j=0; j<i; j++) {
+                    kfree(args[j]);
+                }
+                kfree(args);
+                kfree(progname);
+                kprintf("GG: inargs[%d] = %s\n", i, inargs[i]);
+                return result;
+            }*/
+            
+            for (int j=0; j<tmp_arg_len; j++) {   //because yolo
+                args[i][j] = inargs[i][j];
+            }
+        }
+        else {
+            args[i] = kmalloc(sizeof(int));
+            args[i] = NULL;
+        }
+    }
     
 	/* Open the file. */
 	result = vfs_open(progname, O_RDONLY, 0, &v);
@@ -212,9 +273,6 @@ sys_execv(const char *inprogname, char **inargs){
 	/* Done with the file now. */
 	vfs_close(v);
     
-    
-    // copy to user stack------- and dont forget to kfree after done
-    
 	/* Define the user stack in the address space */
 	result = as_define_stack(as, &stackptr);
 	if (result) {
@@ -222,9 +280,65 @@ sys_execv(const char *inprogname, char **inargs){
 		return result;
 	}
     
+    // copy to user stack------- and dont forget to kfree after done
+    //TODO: left off here
+    //int copyout(const void *src, userptr_t userdest, size_t len);
+    
+    //loops for each arg in args[i]
+    for (int i = 0; args[i] != NULL; i++) {
+        int arg_len = 0;  //this is the length of the string + '/0'
+        int arg_total_len = 0;  // this is length of string + padding divisible by 4
+        char *tmp_arg = NULL;
+        
+        arg_len = strlen(args[i]);
+        arg_len++; //for null of course
+        if (arg_len%4 != 0){
+            arg_total_len = arg_len + (4 - (arg_len%4));
+        }
+        else {
+            arg_total_len = arg_len;
+        }
+        
+        //decrement stack ptr
+        stackptr -= arg_total_len;
+        
+        //allocate and copy to tmp_arg with padding
+        tmp_arg = kmalloc(arg_total_len * sizeof(char));
+        for (int j=0; j<arg_total_len; j++) {
+            if (j<arg_len){
+                tmp_arg[j] = args[i][j];
+            }
+            else {
+                tmp_arg[j]='\0';
+            }
+            //kprintf("copied: %s\n", tmp_arg);
+        }
+        //kprintf("tmparg = %s arglen=%d arg_total_len= %d \n", tmp_arg, arg_len, arg_total_len);
+        result = copyout((const void *)tmp_arg,
+                         (userptr_t)stackptr, arg_total_len * sizeof(char));
+        if (result) {
+            //dont forget to kfree stuff
+            return result;
+        }
+        arg_pointers[i] = (char *)stackptr;
+        kfree(tmp_arg);
+    }
+    
+    //does it reach null?, this is the args[i] == NULL case
+    stackptr -= sizeof(int);  //probably works
+    
+    stackptr -= argc * sizeof(char *);
+    result = copyout((const void *)arg_pointers, (userptr_t)stackptr, argc * sizeof(char *));
+    
+    //cleaning up
+    kfree(progname);
+    for (int i=0; i<argc; i++) {
+        kfree(args[i]);
+    }
+    kfree(args);
+    
 	/* Warp to user mode. */
-	enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/,
-                      stackptr, entrypoint);
+	enter_new_process(argc, (userptr_t)stackptr, stackptr, entrypoint);
 	
 	/* enter_new_process does not return. */
 	panic("enter_new_process returned\n");
@@ -347,3 +461,7 @@ sys_waitpid(pid_t pid,
 #endif //OPT_A2
     return(0);
 }
+
+
+
+
