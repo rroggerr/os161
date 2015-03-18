@@ -14,7 +14,8 @@
 #include "opt-A2.h"
 #include <array.h>
 #include <synch.h>
-
+#include <vfs.h>
+#include <kern/fcntl.h>
 
 /* this implementation of sys__exit does not do anything with the exit code */
 /* this needs to be fixed to get exit() and waitpid() working properly */
@@ -55,6 +56,7 @@ void sys__exit(int exitcode) {
         /* note: curproc cannot be used after this call */
         proc_remthread(curthread);
         
+        
         //set all the childrean of this poc to dead
         for (int i=0; i<get_array_size(); i++) {
             //find child with the dead parent
@@ -72,7 +74,7 @@ void sys__exit(int exitcode) {
     }
     else{
         KASSERT(curproc->p_addrspace != NULL);
-
+        
         as_deactivate();
         /*
          * clear p_addrspace before calling as_destroy. Otherwise if
@@ -125,8 +127,8 @@ sys_fork(struct trapframe *tf, pid_t *retval){
         // copy addr space over
         /*int ascopyerr = */as_copy(p->p_addrspace, &(childproc->p_addrspace));
         /*if (ascopyerr) {
-            panic("as_copy failed in sys_fork\n");
-        }*/
+         panic("as_copy failed in sys_fork\n");
+         }*/
         
         //copy over p_cwd pointers
         childproc->p_cwd = p->p_cwd;
@@ -137,11 +139,96 @@ sys_fork(struct trapframe *tf, pid_t *retval){
         int forkerror = thread_fork("child process thread", childproc,
                                     enter_forked_process, new_tf,0);
         if (forkerror) {
-            panic("thread_fork failed in sys_fork\n");
+            return(ENOMEM);
         }
         return 0;
     }
     return 0; //should not get here
+}
+
+#endif //OPT_A2
+
+/* write sys_execv here */
+
+#if OPT_A2
+
+int
+sys_execv(const char *inprogname, char **inargs){
+    
+    struct addrspace *as;
+	struct vnode *v;
+	vaddr_t entrypoint, stackptr;
+	int result; // for checking error
+    char *progname; //kmalloc and copy here later
+    
+    
+    
+    //should copy in the progname and args here
+    (void)inprogname;
+    (void)inargs;
+    
+    //int copyinstr(const_userptr_t usersrc, char *dest, size_t len, size_t *got);
+    int progname_size = strlen(inprogname);
+    progname_size ++;
+    progname = kmalloc(progname_size * sizeof(char *));
+    
+    size_t got; // i dont think this matters
+    result = copyinstr((const_userptr_t)inprogname, progname, 128, &got);
+    if (result) {
+		return result;
+	}
+    
+	/* Open the file. */
+	result = vfs_open(progname, O_RDONLY, 0, &v);
+	if (result) {
+		return result;
+	}
+    
+    
+	/* Create a new address space. */
+    //should destroy current proc addrspace
+	if (curproc_getas() != NULL){
+        as_destroy(curproc_getas());
+    }
+    
+	as = as_create();
+	if (as ==NULL) {
+		vfs_close(v);
+		return ENOMEM;
+	}
+    
+	/* Switch to it and activate it. */
+	curproc_setas(as);
+	as_activate();
+    
+	/* Load the executable. */
+	result = load_elf(v, &entrypoint);
+	if (result) {
+		/* p_addrspace will go away when curproc is destroyed */
+		vfs_close(v);
+		return result;
+	}
+    
+	/* Done with the file now. */
+	vfs_close(v);
+    
+    
+    // copy to user stack------- and dont forget to kfree after done
+    
+	/* Define the user stack in the address space */
+	result = as_define_stack(as, &stackptr);
+	if (result) {
+		/* p_addrspace will go away when curproc is destroyed */
+		return result;
+	}
+    
+	/* Warp to user mode. */
+	enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/,
+                      stackptr, entrypoint);
+	
+	/* enter_new_process does not return. */
+	panic("enter_new_process returned\n");
+	return EINVAL;
 }
 
 #endif //OPT_A2
@@ -185,7 +272,7 @@ sys_waitpid(pid_t pid,
     
     //check for proc that already exited
     struct proc *child = proctable[pid-1];
-    if (!child->alive){
+    if (!(child->alive) || child->parpid ==0){ //YOLO
         exitstatus = child->exit_status;
         exitstatus = _MKWAIT_EXIT(exitstatus);
         copyout((void *)&exitstatus,status,sizeof(int));
@@ -201,6 +288,9 @@ sys_waitpid(pid_t pid,
         // caller is not parent
         *retval = 0;
         //kprintf("caller is not parent currpid: %d, child parent: %d\n", p->currpid ,child->parpid);
+        
+        //debug print
+        //kprintf("currpid %d, childparpid %d", p->currpid, child->parpid);
         return(ECHILD);
     }
     // assumptions correct, proceed
@@ -226,6 +316,9 @@ sys_waitpid(pid_t pid,
                 tmpchild->parpid=0;
             }
         }
+        
+        //try thread deatch??
+        
         
         kfree(child);
         return(0);
